@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>スマホ電源OFFタイマー</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101827;
+      color: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: radial-gradient(circle at top, #1d3150 0, #101827 55%);
+    }
+    main {
+      width: min(100%, 440px);
+      padding: 32px 26px;
+      border: 1px solid #334155;
+      border-radius: 24px;
+      background: rgba(15, 23, 42, .94);
+      box-shadow: 0 24px 70px #0005;
+      text-align: center;
+    }
+    .icon { font-size: 42px; margin-bottom: 10px; }
+    h1 { margin: 0; font-size: 1.55rem; }
+    .description { color: #cbd5e1; line-height: 1.7; margin: 12px 0 26px; }
+    .status {
+      min-height: 58px;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      border-radius: 14px;
+      background: #1e293b;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+    .status.warning { color: #fde68a; background: #422006; }
+    .status.running { color: #86efac; background: #052e16; }
+    .status.done { color: #bfdbfe; background: #172554; }
+    .time {
+      margin: 22px 0;
+      font-variant-numeric: tabular-nums;
+      font-size: clamp(2.5rem, 12vw, 4rem);
+      font-weight: 750;
+      letter-spacing: .04em;
+    }
+    button {
+      width: 100%;
+      min-height: 54px;
+      border: 0;
+      border-radius: 14px;
+      background: #38bdf8;
+      color: #082f49;
+      font: inherit;
+      font-size: 1.05rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    button:hover { background: #7dd3fc; }
+    button:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+    button.secondary { margin-top: 10px; background: #334155; color: #f8fafc; }
+    .note { margin: 20px 0 0; color: #94a3b8; font-size: .83rem; line-height: 1.6; text-align: left; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="icon" aria-hidden="true">🔋</div>
+    <h1>スマホ電源OFFタイマー</h1>
+    <p class="description">開始後10秒以内にスマホの電源を切ってください。電源OFF中の時間を計測します。</p>
+
+    <div id="status" class="status" role="status" aria-live="polite">準備ができたらタイマーを開始してください。</div>
+    <div id="time" class="time" aria-label="経過時間">00:00:00</div>
+
+    <button id="startButton" type="button">タイマーを開始</button>
+    <button id="resetButton" class="secondary" type="button" hidden>リセット</button>
+
+    <p class="note">※ウェブページはスマホ本体の電源状態を直接検知できません。開始から10秒後を計測開始時刻とし、端末の電源が入り、このページに戻ったことを検知した時点で停止します。ブラウザーやOSの動作により、実際の電源OFF時間とはずれる場合があります。</p>
+  </main>
+
+  <script>
+    (() => {
+      const STORAGE_KEY = "detox-phone-off-timer-v1";
+      const COUNTDOWN_MS = 10_000;
+      const status = document.getElementById("status");
+      const timeDisplay = document.getElementById("time");
+      const startButton = document.getElementById("startButton");
+      const resetButton = document.getElementById("resetButton");
+      let session = readSession();
+      let intervalId = null;
+
+      function readSession() {
+        try {
+          const value = JSON.parse(localStorage.getItem(STORAGE_KEY));
+          if (value && ["countdown", "running", "finished"].includes(value.state)) return value;
+        } catch (_) { /* Ignore invalid or unavailable saved data. */ }
+        return null;
+      }
+
+      function saveSession() {
+        try {
+          if (session) localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+          else localStorage.removeItem(STORAGE_KEY);
+        } catch (_) { /* The timer still works for the current page if storage is unavailable. */ }
+      }
+
+      function formatDuration(milliseconds) {
+        const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return [hours, minutes, seconds].map(value => String(value).padStart(2, "0")).join(":");
+      }
+
+      function setStatus(message, kind = "") {
+        status.textContent = message;
+        status.className = `status ${kind}`.trim();
+      }
+
+      function render() {
+        clearInterval(intervalId);
+        intervalId = null;
+        startButton.hidden = Boolean(session && session.state !== "finished");
+        resetButton.hidden = !session;
+
+        if (!session) {
+          timeDisplay.textContent = "00:00:00";
+          setStatus("準備ができたらタイマーを開始してください。");
+          return;
+        }
+
+        if (session.state === "countdown") {
+          const remaining = session.startAt - Date.now();
+          if (remaining <= 0) {
+            session.state = "running";
+            saveSession();
+            render();
+            return;
+          }
+          timeDisplay.textContent = formatDuration(0);
+          setStatus(`あと${Math.ceil(remaining / 1000)}秒で計測開始。今すぐ電源を切ってください！`, "warning");
+          intervalId = setInterval(render, 200);
+          return;
+        }
+
+        if (session.state === "running") {
+          timeDisplay.textContent = formatDuration(Date.now() - session.startAt);
+          setStatus("計測中です。電源を入れてこのページに戻ると停止します。", "running");
+          intervalId = setInterval(render, 250);
+          return;
+        }
+
+        timeDisplay.textContent = formatDuration(session.elapsed);
+        setStatus("タイマー停止。おつかれさまでした！", "done");
+      }
+
+      startButton.addEventListener("click", () => {
+        session = { state: "countdown", startAt: Date.now() + COUNTDOWN_MS };
+        saveSession();
+        render();
+      });
+
+      resetButton.addEventListener("click", () => {
+        session = null;
+        saveSession();
+        render();
+      });
+
+      // A returning visible page is used as an approximation for the phone being powered on.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !session) return;
+        if (session.state === "countdown" && Date.now() >= session.startAt) {
+          session.state = "running";
+          saveSession();
+        } else if (session.state === "running") {
+          session.elapsed = Math.max(0, Date.now() - session.startAt);
+          session.state = "finished";
+          session.finishedAt = Date.now();
+          saveSession();
+        }
+        render();
+      });
+
+      // Re-render when the browser is reopened, including after the device was powered off.
+      render();
+    })();
+  </script>
+</body>
+</html>
